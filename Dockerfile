@@ -1,16 +1,14 @@
 # Unsloth Studio — GX10 / DGX Spark (ARM64 aarch64, SM_121)
 #
-# Fixes baked in vs upstream Dockerfile_DGX_Spark:
-#   1. torchcodec — no aarch64 wheel on PyPI; installed from pytorch index
-#   2. diceware — missing from studio venv; required for bootstrap password gen
-#   3. fastapi + auth deps — missing from studio venv
-#   4. install.sh run to create studio venv (Python 3.13 via uv)
-#   5. unsloth studio setup run to build frontend + llama.cpp (sm_121)
+# Pinned versions are defined in .env.versions
+# Build args are passed in by setup.sh via --build-arg
+
+ARG NVIDIA_BASE_IMAGE=nvcr.io/nvidia/pytorch:25.11-py3
+FROM ${NVIDIA_BASE_IMAGE}
 
 ARG UNSLOTH_VERSION=2026.4.8
-
-# ── Base: official NVIDIA PyTorch image for sbsa (ARM64 server) ───────────────
-FROM nvcr.io/nvidia/pytorch:25.11-py3
+ARG TORCHCODEC_VERSION=0.11.1
+ARG CUDA_INDEX=cu130
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -20,22 +18,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 libglib2.0-0 libsm6 libxrender1 libxext6 libxcb1 \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Install pinned unsloth into system Python 3.12 ───────────────────────────
-ARG UNSLOTH_VERSION
-RUN pip install --no-cache-dir unsloth==${UNSLOTH_VERSION} diceware
+# ── Install pinned unsloth + diceware into system Python 3.12 ─────────────────
+RUN pip install --no-cache-dir \
+    unsloth==${UNSLOTH_VERSION} \
+    diceware
 
 # ── Patch torchcodec in system Python (no aarch64 wheel on PyPI) ─────────────
-RUN pip install --no-cache-dir torchcodec \
-    --index-url https://download.pytorch.org/whl/cu130 || \
-    echo "torchcodec install skipped (non-fatal)"
+RUN pip install --no-cache-dir \
+    torchcodec==${TORCHCODEC_VERSION} \
+    --index-url https://download.pytorch.org/whl/${CUDA_INDEX} || \
+    echo "torchcodec system install skipped (non-fatal)"
 
 # ── Run install.sh to create studio venv (Python 3.13 via uv) ────────────────
-# This creates /root/.unsloth/studio/unsloth_studio/
 RUN curl -fsSL https://unsloth.ai/install.sh | sh
 
 # ── Patch torchcodec in studio venv (Python 3.13) ────────────────────────────
 RUN /root/.unsloth/studio/unsloth_studio/bin/pip install --no-cache-dir \
-    torchcodec --index-url https://download.pytorch.org/whl/cu130 || \
+    torchcodec==${TORCHCODEC_VERSION} \
+    --index-url https://download.pytorch.org/whl/${CUDA_INDEX} || \
     echo "torchcodec venv install skipped (non-fatal)"
 
 # ── Install missing auth/server deps into studio venv ────────────────────────
@@ -47,12 +47,15 @@ RUN unsloth studio setup
 
 WORKDIR /workspace
 
-# ── Expose ports ──────────────────────────────────────────────────────────────
-# 8000 = Unsloth Studio UI
-# 8888 = JupyterLab
 EXPOSE 8000 8888
 
 # ── Runtime entrypoint ────────────────────────────────────────────────────────
-# Use uv Python 3.13 directly — NVIDIA's entrypoint corrupts exec environment
-ENTRYPOINT ["/root/.local/share/uv/python/cpython-3.13.9-linux-aarch64-gnu/bin/python3.13"]
-CMD ["/root/.unsloth/studio/unsloth_studio/bin/unsloth", "studio", "-H", "0.0.0.0", "-p", "8000"]
+# UV_PYTHON_VERSION must match what install.sh downloads at build time.
+# Check /root/.local/share/uv/python/ if this needs updating after a rebuild.
+ARG UV_PYTHON_VERSION=cpython-3.13.9-linux-aarch64-gnu
+ENV UV_PYTHON_VERSION=${UV_PYTHON_VERSION}
+
+ENTRYPOINT ["/bin/sh", "-c", \
+    "exec /root/.local/share/uv/python/${UV_PYTHON_VERSION}/bin/python3.13 \"$@\"", "--"]
+CMD ["/root/.unsloth/studio/unsloth_studio/bin/unsloth", \
+     "studio", "-H", "0.0.0.0", "-p", "8000"]

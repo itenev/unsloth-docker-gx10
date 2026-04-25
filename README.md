@@ -23,6 +23,7 @@ This repo fixes all known aarch64 incompatibilities in the upstream Unsloth Dock
 
 | File | Purpose |
 |---|---|
+| `.env.versions` | Single source of truth for all pinned versions |
 | `Dockerfile` | ARM64-compatible image with all aarch64 fixes baked in |
 | `docker-compose.yml` | Hardened runtime config (GPU, IPC, ports, volumes) |
 | `setup.sh` | One-command build + start script |
@@ -59,10 +60,9 @@ sudo systemctl restart docker
 ## Quick start
 
 ```bash
-git clone <this-repo> unsloth-docker
-cd unsloth-docker
+git clone <this-repo> unsloth-docker-gx10
+cd unsloth-docker-gx10
 chmod +x setup.sh
-./setup.sh
 ```
 
 Build takes **20–40 minutes** on first run — llama.cpp is compiled from source targeting SM_121.
@@ -129,11 +129,10 @@ docker exec -it unsloth-studio bash
 | Python (studio venv) | 3.13.9 (via uv) |
 | llama.cpp | Built from source at setup time (sm_121) |
 
-To update Unsloth, change `UNSLOTH_VERSION` at the top of `setup.sh` and `Dockerfile`, then rebuild:
+To update any version, edit `.env.versions` and rebuild:
 ```bash
 docker compose down
 docker rmi unsloth-gx10:latest
-./setup.sh
 ```
 
 ---

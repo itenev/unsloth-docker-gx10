@@ -1,3 +1,8 @@
+# Runtime data — not part of the repo
 work/
-*.env
 *.code-workspace
+
+# Local secrets — never commit
+.env
+*.pem
+*.key

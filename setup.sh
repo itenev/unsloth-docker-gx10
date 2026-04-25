@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # setup.sh — Build and start Unsloth Studio for the ASUS GX10 (ARM64/aarch64)
 #
-# Prerequisites:
-#   - Docker with NVIDIA Container Toolkit installed
-#   - llama.cpp built with SM_121: see README for build steps
+# All pinned versions are read from .env.versions in the same directory.
+# To update, edit .env.versions and re-run this script.
 #
 # Usage:
 #   chmod +x setup.sh && ./setup.sh
@@ -11,14 +10,30 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-UNSLOTH_VERSION="2026.4.8"
+
+# ── Load pinned versions ───────────────────────────────────────────────────────
+VERSIONS_FILE="${SCRIPT_DIR}/.env.versions"
+if [[ ! -f "${VERSIONS_FILE}" ]]; then
+  echo "ERROR: ${VERSIONS_FILE} not found. Cannot determine pinned versions."
+  exit 1
+fi
+
+# Export all non-comment lines as variables
+set -a
+# shellcheck disable=SC1090
+source "${VERSIONS_FILE}"
+set +a
+
 IMAGE_NAME="unsloth-gx10:${UNSLOTH_VERSION}"
 
 echo "============================================================"
 echo " Unsloth Studio GX10 Setup"
-echo " Unsloth version : ${UNSLOTH_VERSION} (pinned)"
-echo " Architecture    : $(uname -m)"
-echo " Image           : ${IMAGE_NAME}"
+echo " Unsloth version  : ${UNSLOTH_VERSION}"
+echo " Base image        : ${NVIDIA_BASE_IMAGE}"
+echo " UV Python         : ${UV_PYTHON_VERSION}"
+echo " torchcodec        : ${TORCHCODEC_VERSION}"
+echo " Architecture      : $(uname -m)"
+echo " Image             : ${IMAGE_NAME}"
 echo "============================================================"
 echo ""
 
@@ -47,12 +62,16 @@ echo "    ~/models and ./work ready"
 
 # ── Step 3: Build the image ───────────────────────────────────────────────────
 echo ""
-echo "==> Step 3: Building ${IMAGE_NAME} (20-40 min on first run)..."
-echo "    This compiles llama.cpp from source targeting SM_121 (Blackwell)."
+echo "==> Step 3: Building ${IMAGE_NAME} (20–40 min on first run)..."
+echo "    Compiles llama.cpp from source targeting SM_121 (Blackwell)."
 echo ""
 
 docker build \
+  --build-arg NVIDIA_BASE_IMAGE="${NVIDIA_BASE_IMAGE}" \
   --build-arg UNSLOTH_VERSION="${UNSLOTH_VERSION}" \
+  --build-arg TORCHCODEC_VERSION="${TORCHCODEC_VERSION}" \
+  --build-arg CUDA_INDEX="${CUDA_INDEX}" \
+  --build-arg UV_PYTHON_VERSION="${UV_PYTHON_VERSION}" \
   -t "${IMAGE_NAME}" \
   -t "unsloth-gx10:latest" \
   -f "${SCRIPT_DIR}/Dockerfile" \
@@ -63,13 +82,13 @@ echo "==> Step 3 complete — image built successfully"
 
 # ── Step 4: Verify SM_121 llama.cpp inside image ──────────────────────────────
 echo ""
-echo "==> Step 4: Verifying SM_121 llama.cpp inside image..."
-LLAMA_VER=$(docker run --rm --gpus all \
-  --entrypoint /root/.local/share/uv/python/cpython-3.13.9-linux-aarch64-gnu/bin/python3.13 \
+echo "==> Step 4: Verifying SM_121 llama.cpp..."
+LLAMA_CHECK=$(docker run --rm --gpus all \
+  --entrypoint bash \
   "${IMAGE_NAME}" \
-  -c "import subprocess, sys; r = subprocess.run(['/root/.unsloth/llama.cpp/build/bin/llama-server','--version'], capture_output=True, text=True); print(r.stderr)" \
-  2>/dev/null | grep "compute capability" || echo "    WARNING: could not verify — check manually")
-echo "    ${LLAMA_VER}"
+  -c "/root/.unsloth/llama.cpp/build/bin/llama-server --version 2>&1 | grep 'compute capability'" \
+  2>/dev/null || echo "    WARNING: could not verify — run manually after start")
+echo "    ${LLAMA_CHECK}"
 
 # ── Step 5: Start via docker compose ──────────────────────────────────────────
 echo ""
@@ -85,16 +104,16 @@ for i in $(seq 1 30); do
   fi
   sleep 2
   if [[ $i -eq 30 ]]; then
-    echo "    WARNING: Health check timed out — check logs with:"
+    echo "    WARNING: Health check timed out. Check logs:"
     echo "    docker logs -f unsloth-studio"
   fi
 done
 
-# ── Step 6: Print bootstrap password ──────────────────────────────────────────
-echo ""
+# ── Step 6: Print access details ──────────────────────────────────────────────
 BOOTSTRAP_PW=$(docker exec unsloth-studio \
   cat /root/.unsloth/studio/auth/.bootstrap_password 2>/dev/null || echo "(already changed)")
 
+echo ""
 echo "============================================================"
 echo " Unsloth Studio is running!"
 echo ""
