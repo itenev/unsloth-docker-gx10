@@ -1,0 +1,70 @@
+name: unsloth-gx10
+
+services:
+  unsloth-studio:
+    image: unsloth-gx10:latest
+    container_name: unsloth-studio
+    restart: unless-stopped
+
+    # ── Entrypoint + command ──────────────────────────────────────────────────
+    # Use uv Python 3.13 directly — NVIDIA's default entrypoint corrupts exec
+    entrypoint: ["/root/.local/share/uv/python/cpython-3.13.9-linux-aarch64-gnu/bin/python3.13"]
+    command: [
+      "/root/.unsloth/studio/unsloth_studio/bin/unsloth",
+      "studio", "-H", "0.0.0.0", "-p", "8000"
+    ]
+
+    # ── GPU ───────────────────────────────────────────────────────────────────
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    # ── PyTorch / CUDA runtime requirements ───────────────────────────────────
+    ipc: host
+    shm_size: "16gb"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+
+    # ── Ports ─────────────────────────────────────────────────────────────────
+    # 8000 = Unsloth Studio UI
+    # 8888 = JupyterLab
+    ports:
+      - "8000:8000"
+      - "8888:8888"
+
+    environment:
+      LLAMA_ARG_N_GPU_LAYERS: "-1"
+      LLAMA_ARG_FLASH_ATTN: "1"
+      HF_HOME: "/workspace/.cache/huggingface"
+      # Expose studio venv site-packages to Python 3.13
+      PYTHONPATH: "/root/.unsloth/studio/unsloth_studio/lib/python3.13/site-packages"
+      VIRTUAL_ENV: "/root/.unsloth/studio/unsloth_studio"
+
+    volumes:
+      # Persistent work directory (notebooks, exports, training runs)
+      - ./work:/workspace/work
+
+      # HuggingFace model cache — survives image rebuilds
+      - hf-cache:/workspace/.cache/huggingface
+
+      # Existing GGUF models on host
+      - type: bind
+        source: ${HOME}/models
+        target: /workspace/models
+        read_only: true
+
+      # Auth DB only — preserves login credentials across restarts
+      # Do NOT mount all of ~/.unsloth/studio — it would overwrite the
+      # studio venv baked into the image
+      - unsloth-auth:/root/.unsloth/studio/auth
+
+volumes:
+  hf-cache:
+    name: unsloth-hf-cache
+  unsloth-auth:
+    name: unsloth-studio-auth
