@@ -7,9 +7,6 @@ services:
     restart: unless-stopped
 
     # ── Entrypoint + command ──────────────────────────────────────────────────
-    # UV_PYTHON_VERSION is baked into the image as an ENV var at build time.
-    # The shell wrapper expands it at runtime so this compose file never
-    # needs to hardcode the Python path directly.
     entrypoint: ["/bin/sh", "-c",
       "exec /root/.local/share/uv/python/${UV_PYTHON_VERSION}/bin/python3.13 \"$@\"",
       "--"]
@@ -47,13 +44,29 @@ services:
       VIRTUAL_ENV: "/root/.unsloth/studio/unsloth_studio"
 
     volumes:
+      # Persistent work directory
       - ./work:/workspace/work
+
+      # HuggingFace model cache
       - hf-cache:/workspace/.cache/huggingface
+
+      # Existing GGUF models
       - type: bind
         source: ${HOME}/models
         target: /workspace/models
         read_only: true
+
+      # Auth DB — preserves login credentials across restarts
       - unsloth-auth:/root/.unsloth/studio/auth
+
+      # ── SM_121 GPU-compiled llama.cpp ─────────────────────────────────────
+      # Mounts the host-compiled CUDA binary over the CPU-only binary baked
+      # into the image during docker build (build has no GPU access).
+      # Built on host with: -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=121
+      - type: bind
+        source: ${HOME}/llama.cpp/build-gpu/bin
+        target: /root/.unsloth/llama.cpp/build/bin
+        read_only: true
 
 volumes:
   hf-cache:

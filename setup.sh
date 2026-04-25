@@ -2,7 +2,6 @@
 # setup.sh — Build and start Unsloth Studio for the ASUS GX10 (ARM64/aarch64)
 #
 # All pinned versions are read from .env.versions in the same directory.
-# To update, edit .env.versions and re-run this script.
 #
 # Usage:
 #   chmod +x setup.sh && ./setup.sh
@@ -14,17 +13,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ── Load pinned versions ───────────────────────────────────────────────────────
 VERSIONS_FILE="${SCRIPT_DIR}/.env.versions"
 if [[ ! -f "${VERSIONS_FILE}" ]]; then
-  echo "ERROR: ${VERSIONS_FILE} not found. Cannot determine pinned versions."
+  echo "ERROR: ${VERSIONS_FILE} not found."
   exit 1
 fi
-
-# Export all non-comment lines as variables
 set -a
 # shellcheck disable=SC1090
 source "${VERSIONS_FILE}"
 set +a
 
 IMAGE_NAME="unsloth-gx10:${UNSLOTH_VERSION}"
+LLAMA_SRC="${HOME}/llama.cpp"
+LLAMA_BUILD="${LLAMA_SRC}/build-gpu"
+LLAMA_BIN="${LLAMA_BUILD}/bin/llama-server"
 
 echo "============================================================"
 echo " Unsloth Studio GX10 Setup"
@@ -41,7 +41,7 @@ echo ""
 echo "==> Step 1: Checking prerequisites..."
 
 if ! command -v docker &>/dev/null; then
-  echo "    ERROR: Docker not found. Install Docker first."
+  echo "    ERROR: Docker not found."
   exit 1
 fi
 
@@ -51,7 +51,13 @@ if ! docker info --format '{{.Runtimes}}' 2>/dev/null | grep -q nvidia; then
   exit 1
 fi
 
-echo "    OK — Docker + NVIDIA runtime found"
+if ! command -v cmake &>/dev/null || ! command -v nvcc &>/dev/null; then
+  echo "    Installing build dependencies..."
+  sudo apt-get update -q
+  sudo apt-get install -y --no-install-recommends git cmake build-essential
+fi
+
+echo "    OK — all prerequisites found"
 
 # ── Step 2: Create host directories ───────────────────────────────────────────
 echo ""
@@ -60,11 +66,54 @@ mkdir -p "${HOME}/models"
 mkdir -p "${SCRIPT_DIR}/work"
 echo "    ~/models and ./work ready"
 
-# ── Step 3: Build the image ───────────────────────────────────────────────────
+# ── Step 3: Build llama.cpp on host with SM_121 CUDA support ──────────────────
+# Docker build has no GPU access so the image contains a CPU-only llama.cpp.
+# We build a GPU version on the host and mount it over the CPU binary at runtime.
 echo ""
-echo "==> Step 3: Building ${IMAGE_NAME} (20–40 min on first run)..."
-echo "    Compiles llama.cpp from source targeting SM_121 (Blackwell)."
+echo "==> Step 3: Building llama.cpp for SM_121 on host..."
+
+if [[ -f "${LLAMA_BIN}" ]]; then
+  EXISTING_VER=$(${LLAMA_BIN} --version 2>&1 | grep "compute capability" || true)
+  if [[ "${EXISTING_VER}" == *"12.1"* ]]; then
+    echo "    SM_121 build already exists — skipping"
+    echo "    ${EXISTING_VER}"
+  else
+    echo "    Existing build found but SM_121 not confirmed — rebuilding"
+    rm -rf "${LLAMA_BUILD}"
+  fi
+fi
+
+if [[ ! -f "${LLAMA_BIN}" ]]; then
+  if [[ ! -d "${LLAMA_SRC}" ]]; then
+    echo "    Cloning llama.cpp..."
+    git clone --depth=1 https://github.com/ggerganov/llama.cpp.git "${LLAMA_SRC}"
+  fi
+
+  echo "    Configuring for SM_121..."
+  mkdir -p "${LLAMA_BUILD}"
+  cd "${LLAMA_BUILD}"
+  cmake .. \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DGGML_CUDA=ON \
+    -DGGML_CUDA_F16=ON \
+    -DCMAKE_CUDA_ARCHITECTURES=121
+
+  echo "    Compiling (this takes 2-4 minutes)..."
+  make -j"$(nproc)"
+  cd "${SCRIPT_DIR}"
+
+  BUILT_VER=$(${LLAMA_BIN} --version 2>&1 | grep "compute capability" || true)
+  if [[ "${BUILT_VER}" == *"12.1"* ]]; then
+    echo "    OK — ${BUILT_VER}"
+  else
+    echo "    WARNING: SM_121 not confirmed in build output"
+    echo "    ${BUILT_VER}"
+  fi
+fi
+
+# ── Step 4: Build the Docker image ────────────────────────────────────────────
 echo ""
+echo "==> Step 4: Building ${IMAGE_NAME} (20-40 min on first run)..."
 
 docker build \
   --build-arg NVIDIA_BASE_IMAGE="${NVIDIA_BASE_IMAGE}" \
@@ -77,18 +126,7 @@ docker build \
   -f "${SCRIPT_DIR}/Dockerfile" \
   "${SCRIPT_DIR}"
 
-echo ""
-echo "==> Step 3 complete — image built successfully"
-
-# ── Step 4: Verify SM_121 llama.cpp inside image ──────────────────────────────
-echo ""
-echo "==> Step 4: Verifying SM_121 llama.cpp..."
-LLAMA_CHECK=$(docker run --rm --gpus all \
-  --entrypoint bash \
-  "${IMAGE_NAME}" \
-  -c "/root/.unsloth/llama.cpp/build/bin/llama-server --version 2>&1 | grep 'compute capability'" \
-  2>/dev/null || echo "    WARNING: could not verify — run manually after start")
-echo "    ${LLAMA_CHECK}"
+echo "    Image built successfully"
 
 # ── Step 5: Start via docker compose ──────────────────────────────────────────
 echo ""
@@ -109,7 +147,20 @@ for i in $(seq 1 30); do
   fi
 done
 
-# ── Step 6: Print access details ──────────────────────────────────────────────
+# ── Step 6: Verify GPU inference ──────────────────────────────────────────────
+echo ""
+echo "==> Step 6: Verifying GPU backend..."
+GPU_CHECK=$(docker logs unsloth-studio 2>&1 | grep "Hardware detected" | tail -1)
+if [[ "${GPU_CHECK}" == *"CPU"* ]]; then
+  echo "    WARNING: ${GPU_CHECK}"
+  echo "    llama.cpp mount may not be working — check the bind mount in docker-compose.yml"
+elif [[ "${GPU_CHECK}" == *"CUDA"* ]]; then
+  echo "    OK — ${GPU_CHECK}"
+else
+  echo "    ${GPU_CHECK}"
+fi
+
+# ── Step 7: Print access details ──────────────────────────────────────────────
 BOOTSTRAP_PW=$(docker exec unsloth-studio \
   cat /root/.unsloth/studio/auth/.bootstrap_password 2>/dev/null || echo "(already changed)")
 
