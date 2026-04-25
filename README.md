@@ -50,6 +50,7 @@ This repo fixes all known aarch64 incompatibilities in the upstream Unsloth Dock
 - GX10 connected to local network
 
 Install NVIDIA Container Toolkit if not present:
+
 ```bash
 sudo apt install nvidia-container-toolkit
 sudo systemctl restart docker
@@ -130,6 +131,7 @@ docker exec -it unsloth-studio bash
 | llama.cpp | Built from source at setup time (sm_121) |
 
 To update any version, edit `.env.versions` and rebuild:
+
 ```bash
 docker compose down
 docker rmi unsloth-gx10:latest
@@ -162,26 +164,31 @@ docker exec unsloth-studio cat /root/.unsloth/studio/auth/.bootstrap_password
 ## Troubleshooting
 
 **Container keeps restarting**
+
 ```bash
 docker logs unsloth-studio 2>&1 | tail -30
 ```
 
 **`cannot execute binary file`**
 The NVIDIA entrypoint is interfering. Verify `entrypoint` in `docker-compose.yml` points to the full uv Python path:
+
 ```
 /root/.local/share/uv/python/cpython-3.13.9-linux-aarch64-gnu/bin/python3.13
 ```
 
 **`No module named 'unsloth_cli'`**
 `PYTHONPATH` is not set. Verify the `environment` section in `docker-compose.yml` includes:
+
 ```yaml
 PYTHONPATH: "/root/.unsloth/studio/unsloth_studio/lib/python3.13/site-packages"
 ```
 
 **GPU not detected / sm_121 not shown**
+
 ```bash
 docker exec unsloth-studio nvidia-smi
 ```
+
 If GPU is missing, verify `--gpus all` is active via the `deploy.resources` block in compose.
 
 ---
