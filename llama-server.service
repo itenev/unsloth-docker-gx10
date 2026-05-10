@@ -1,0 +1,41 @@
+[Unit]
+Description=llama-server — SM_121 CUDA inference (Qwen3.6 27B)
+Documentation=https://github.com/ggerganov/llama.cpp
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=itenev
+Group=itenev
+
+# Load configuration from env file
+EnvironmentFile=/etc/llama-server/llama-server.env
+
+# Binary path — host-compiled SM_121 build
+ExecStart=/home/itenev/llama.cpp/build-gpu/bin/llama-server \
+    --model ${MODEL} \
+    --host ${HOST} \
+    --port ${PORT} \
+    --n-gpu-layers ${N_GPU_LAYERS} \
+    --ctx-size ${CONTEXT_SIZE} \
+    --parallel ${PARALLEL} \
+    --flash-attn ${FLASH_ATTN}
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+# Logging — view with: journalctl -u llama-server -f
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=llama-server
+
+# Runtime limits
+LimitNOFILE=65536
+LimitMEMLOCK=infinity
+
+[Install]
+WantedBy=multi-user.target

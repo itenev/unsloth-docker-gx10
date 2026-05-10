@@ -1,0 +1,72 @@
+name: unsloth-gx10
+
+services:
+  unsloth-studio:
+    image: unsloth-gx10:latest
+    container_name: unsloth-studio
+    restart: unless-stopped
+
+    # ── Entrypoint + command ──────────────────────────────────────────────────
+    entrypoint: ["/root/.local/share/uv/python/cpython-3.13.9-linux-aarch64-gnu/bin/python3.13"]
+    command: [
+      "/root/.unsloth/studio/unsloth_studio/bin/unsloth",
+      "studio", "-H", "0.0.0.0", "-p", "8000"
+    ]
+
+    # ── GPU ───────────────────────────────────────────────────────────────────
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    # ── PyTorch / CUDA runtime requirements ───────────────────────────────────
+    ipc: host
+    shm_size: "16gb"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+
+    # ── Ports ─────────────────────────────────────────────────────────────────
+    ports:
+      - "8000:8000"
+      - "8888:8888"
+
+    environment:
+      LLAMA_ARG_N_GPU_LAYERS: "-1"
+      LLAMA_ARG_FLASH_ATTN: "1"
+      PYTHONPATH: "/root/.unsloth/studio/unsloth_studio/lib/python3.13/site-packages"
+      VIRTUAL_ENV: "/root/.unsloth/studio/unsloth_studio"
+      # Store HF cache inside ~/models so downloads are shared with host
+      # llama.cpp and accessible outside the container without docker exec
+      HF_HOME: "/workspace/models/.cache/huggingface"
+
+    volumes:
+      # Persistent work directory
+      - ./work:/workspace/work
+
+      # Auth DB — preserves login credentials across restarts
+      - unsloth-auth:/root/.unsloth/studio/auth
+
+      # ── Unified model directory ───────────────────────────────────────────
+      # ~/models on the host is mounted read-write so:
+      #   - Studio downloads go to ~/models/.cache/huggingface/hub/
+      #   - Flat GGUFs in ~/models/ are visible to Studio
+      #   - Host llama.cpp can access all downloaded models directly
+      - type: bind
+        source: ${HOME}/models
+        target: /workspace/models
+
+      # ── SM_121 GPU-compiled llama.cpp ─────────────────────────────────────
+      # All binaries AND shared libraries (.so) are in build-gpu/bin/
+      # Mount bin/ → bin/ to override the CPU-only binary baked in the image
+      - type: bind
+        source: ${HOME}/llama.cpp/build-gpu/bin
+        target: /root/.unsloth/llama.cpp/build/bin
+        read_only: true
+
+volumes:
+  unsloth-auth:
+    name: unsloth-studio-auth
