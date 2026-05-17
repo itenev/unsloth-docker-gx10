@@ -15,7 +15,7 @@ EnvironmentFile=/etc/llama-server/llama-server.env
 # Binary path — host-compiled SM_121 build
 ExecStart=/home/itenev/llama.cpp/build-gpu/bin/llama-server \
     --model ${MODEL} \
-    --draft-model ${DRAFT_MODEL} \
+    --spec-draft-model ${DRAFT_MODEL} \
     --spec-draft-n-max ${DRAFT_TOKENS} \
     --host ${HOST} \
     --port ${PORT} \
